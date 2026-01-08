@@ -15,6 +15,7 @@ class Woo_Image_Fixer {
 
     /* Options & constants */
     const SOURCE_URL   = 'https://smtm.com.ua/_prices/import-retail-ua-2.xml';
+    const PLACEHOLDER_URL = 'https://lyuboshchi.com.ua/wp-content/uploads/woocommerce-placeholder-600x600.png';
     const OPTION_KEY   = 'woo_image_fixer_state';
     const LOG_KEY      = 'woo_image_fixer_log';
 
@@ -118,24 +119,106 @@ class Woo_Image_Fixer {
     public function render_admin_page(){
         $next_batch = wp_next_scheduled(self::CRON_HOOK_BATCH);
         $tok        = esc_html(get_option(self::RUNNER_TOKEN_OPTION, '—'));
-        echo '<div class="wrap"><h1>Woo Image Fixer (Оптимізована версія)</h1>';
-        echo '<p>Фід: <code>'.esc_html(self::SOURCE_URL).'</code></p>';
-        echo '<p><strong>УВАГА:</strong> Плагін працює в режимі мінімального навантаження (3 товари за раз, пауза 60 сек)</p>';
-        echo '<p>Next batch: <strong id="wif-next">'.($next_batch?esc_html(date_i18n('Y-m-d H:i:s',$next_batch)):'—').'</strong></p>';
+        $next_batch_label = $next_batch ? esc_html(date_i18n('Y-m-d H:i:s',$next_batch)) : '—';
+        echo '<div class="wrap wif-app">';
+        echo '<style>
+            .wif-app { max-width: 1200px; }
+            .wif-header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:16px 0 24px; }
+            .wif-title h1 { margin:0 0 6px; font-size:24px; }
+            .wif-subtitle { color:#6b7280; font-size:13px; }
+            .wif-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:#eef2ff; color:#4338ca; font-size:12px; font-weight:600; }
+            .wif-grid { display:grid; grid-template-columns:repeat(12,1fr); gap:16px; }
+            .wif-card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+            .wif-card h2 { margin:0 0 12px; font-size:16px; }
+            .wif-actions { display:flex; flex-wrap:wrap; gap:8px; }
+            .wif-progress { height:12px; background:#f3f4f6; border-radius:999px; overflow:hidden; position:relative; }
+            .wif-progress span { position:absolute; left:0; top:0; height:100%; width:0; background:linear-gradient(90deg,#2563eb,#4f46e5); transition:width .2s ease; }
+            .wif-stat-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; }
+            .wif-stat { border:1px solid #e5e7eb; border-radius:10px; padding:10px 12px; background:#f9fafb; }
+            .wif-stat label { display:block; font-size:11px; color:#6b7280; margin-bottom:4px; text-transform:uppercase; letter-spacing:.04em; }
+            .wif-stat strong { font-size:18px; color:#111827; }
+            .wif-meta { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; font-size:12px; color:#4b5563; }
+            .wif-meta code { font-size:11px; word-break:break-all; overflow-wrap:anywhere; }
+            .wif-log { max-height:360px; overflow:auto; background:#0f172a; color:#e2e8f0; border-radius:10px; padding:12px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; line-height:1.5; }
+            .wif-pill { display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:600; background:#ecfeff; color:#0e7490; }
+            .wif-status { display:flex; flex-wrap:wrap; gap:8px; }
+            .wif-status .wif-pill.is-on { background:#dcfce7; color:#166534; }
+            .wif-status .wif-pill.is-off { background:#fee2e2; color:#991b1b; }
+            .wif-footer { margin-top:18px; color:#94a3b8; font-size:11px; }
+            .wif-sku-list { max-height:220px; overflow:auto; border:1px solid #e5e7eb; border-radius:10px; padding:10px; background:#f8fafc; font-size:12px; color:#334155; }
+            .wif-sku-list ul { margin:0; padding-left:18px; }
+            .wif-sku-list li { word-break:break-all; overflow-wrap:anywhere; margin:0 0 4px; }
+            @media (max-width: 960px) {
+                .wif-stat-grid { grid-template-columns:repeat(2,1fr); }
+                .wif-meta { grid-template-columns:1fr; }
+            }
+        </style>';
 
-        echo '<p>';
-        echo '<button id="wif-start" class="button button-primary">Scan & Fix (start/resume)</button> ';
-        echo '<button id="wif-nudge" class="button">Process One Batch Now</button> ';
-        echo '<button id="wif-restart" class="button button-secondary">Restart from Zero</button> ';
+        echo '<div class="wif-header">';
+        echo '<div class="wif-title">';
+        echo '<h1>Woo Image Fixer</h1>';
+        echo '<div class="wif-subtitle">Інтелектуальне виправлення зображень у фоновому режимі з контролем ресурсів.</div>';
+        echo '</div>';
+        echo '<span class="wif-badge">Оптимізований фоновий режим</span>';
+        echo '</div>';
+
+        echo '<div class="wif-grid">';
+        echo '<div class="wif-card" style="grid-column: span 8;">';
+        echo '<h2>Керування процесом</h2>';
+        echo '<div class="wif-actions">';
+        echo '<button id="wif-start" class="button button-primary">Scan & Fix (start/resume)</button>';
+        echo '<button id="wif-nudge" class="button">Process One Batch Now</button>';
+        echo '<button id="wif-restart" class="button button-secondary">Restart from Zero</button>';
         echo '<button id="wif-refresh" class="button">Refresh Status</button>';
-        echo '</p>';
+        echo '</div>';
+        echo '<div style="margin-top:16px;">';
+        echo '<div class="wif-progress"><span id="wif-bar-in"></span></div>';
+        echo '<div id="wif-progress-text" style="margin-top:8px;font-size:12px;color:#4b5563;">0%</div>';
+        echo '</div>';
+        echo '<div class="wif-stat-grid" style="margin-top:16px;">';
+        echo '<div class="wif-stat"><label>Всього</label><strong id="wif-stat-total">0</strong></div>';
+        echo '<div class="wif-stat"><label>Опрацьовано</label><strong id="wif-stat-current">0</strong></div>';
+        echo '<div class="wif-stat"><label>Виправлено</label><strong id="wif-stat-fixed">0</strong></div>';
+        echo '<div class="wif-stat"><label>Пропущено</label><strong id="wif-stat-skipped">0</strong></div>';
+        echo '<div class="wif-stat"><label>Помилки</label><strong id="wif-stat-errors">0</strong></div>';
+        echo '</div>';
+        echo '</div>';
 
-        echo '<div id="wif-bar" style="width:100%;height:24px;background:#eee;position:relative"><div id="wif-bar-in" style="position:absolute;left:0;top:0;height:100%;width:0;background:#0073aa;color:#fff;text-align:center;line-height:24px;">0%</div></div>';
-        echo '<p id="wif-stats"></p><p id="wif-state"></p>';
+        echo '<div class="wif-card" style="grid-column: span 4;">';
+        echo '<h2>Стан і параметри</h2>';
+        echo '<div class="wif-status">';
+        echo '<span class="wif-pill" id="wif-status-processing">Processing: —</span>';
+        echo '<span class="wif-pill" id="wif-status-scanning">Scanning: —</span>';
+        echo '<span class="wif-pill" id="wif-status-finished">Finished: —</span>';
+        echo '</div>';
+        echo '<div class="wif-meta" style="margin-top:14px;">';
+        echo '<div><strong>Фід постачальника</strong><br><code>'.esc_html(self::SOURCE_URL).'</code></div>';
+        echo '<div><strong>Next batch</strong><br><span id="wif-next">'.$next_batch_label.'</span></div>';
+        echo '<div><strong>Batch size</strong><br>'.esc_html(self::BATCH_SIZE).' товарів</div>';
+        echo '<div><strong>Scan batch</strong><br>'.esc_html(self::SCAN_BATCH_SIZE).' товарів</div>';
+        echo '<div><strong>Timeout</strong><br>'.esc_html(self::IMAGE_TIMEOUT).' сек</div>';
+        echo '<div><strong>Runner token</strong><br><code>'.$tok.'</code></div>';
+        echo '</div>';
+        echo '</div>';
 
-        echo '<h2>Logs</h2>';
-        echo '<div id="wif-log" style="max-height:360px;overflow:auto;background:#fafafa;border:1px solid #ddd;padding:10px;font-family:monospace;white-space:pre-wrap;font-size:11px;"></div>';
-        echo '<p style="opacity:.6">Runner token: '.$tok.'</p>';
+        echo '<div class="wif-card" style="grid-column: span 12;">';
+        echo '<h2>Журнал виконання</h2>';
+        echo '<div id="wif-log" class="wif-log"></div>';
+        echo '<div class="wif-footer">Плагін працює у фоновому режимі й продовжує роботу навіть якщо вкладку закрито.</div>';
+        echo '</div>';
+
+        echo '<div class="wif-card" style="grid-column: span 4;">';
+        echo '<h2>SKU: виправлені</h2>';
+        echo '<div id="wif-sku-fixed" class="wif-sku-list"></div>';
+        echo '</div>';
+        echo '<div class="wif-card" style="grid-column: span 4;">';
+        echo '<h2>SKU: помилки</h2>';
+        echo '<div id="wif-sku-errors" class="wif-sku-list"></div>';
+        echo '</div>';
+        echo '<div class="wif-card" style="grid-column: span 4;">';
+        echo '<h2>SKU: немає зображень у фіді</h2>';
+        echo '<div id="wif-sku-no-urls" class="wif-sku-list"></div>';
+        echo '</div>';
         echo '</div>';
         ?>
         <script>
@@ -146,25 +229,49 @@ class Woo_Image_Fixer {
             function pct(d){ if(!d||!d.total) return 0; const p=Math.round((d.current/d.total)*100); return isFinite(p)?p:0; }
             function draw(d){
                 const p=pct(d);
-                $('#wif-bar-in').css('width',p+'%').text(p+'%');
-                $('#wif-stats').text(d && d.stats ? ('Fixed:'+ (d.stats.img_fixed||0) + ', Skipped:'+ (d.stats.skipped||0) + ', Errors:'+ (d.stats.errors||0)):'');
-                $('#wif-state').text(
-                    (d.processing?'processing':'idle')
-                    +(d.finished?' (finished)':'')
-                    +(d.total?(' | '+d.current+'/'+d.total):'')
-                    +(d.scanning?' [SCANNING...]':'')
-                );
+                $('#wif-bar-in').css('width',p+'%');
+                $('#wif-progress-text').text(p+'% · '+(d.current||0)+' / '+(d.total||0));
+                $('#wif-stat-total').text(d.total||0);
+                $('#wif-stat-current').text(d.current||0);
+                $('#wif-stat-fixed').text((d.stats && d.stats.img_fixed) ? d.stats.img_fixed : 0);
+                $('#wif-stat-skipped').text((d.stats && d.stats.skipped) ? d.stats.skipped : 0);
+                $('#wif-stat-errors').text((d.stats && d.stats.errors) ? d.stats.errors : 0);
+
+                const proc = !!(d && d.processing);
+                const scan = !!(d && d.scanning);
+                const fin = !!(d && d.finished);
+
+                $('#wif-status-processing').text('Processing: '+(proc?'Yes':'No'))
+                    .toggleClass('is-on', proc).toggleClass('is-off', !proc);
+                $('#wif-status-scanning').text('Scanning: '+(scan?'Yes':'No'))
+                    .toggleClass('is-on', scan).toggleClass('is-off', !scan);
+                $('#wif-status-finished').text('Finished: '+(fin?'Yes':'No'))
+                    .toggleClass('is-on', fin).toggleClass('is-off', !fin);
             }
             function drawLog(lines){
                 $('#wif-log').text((lines||[]).join('\n'));
                 const el=document.getElementById('wif-log'); 
                 if(el) el.scrollTop=el.scrollHeight;
             }
+            function drawSkuList(selector, list){
+                const items = Array.isArray(list) ? list : [];
+                if (!items.length) {
+                    $(selector).html('<em>Поки що пусто</em>');
+                    return;
+                }
+                const html = '<ul>' + items.map(function(sku){
+                    return '<li>'+String(sku)+'</li>';
+                }).join('') + '</ul>';
+                $(selector).html(html);
+            }
             function status(cb){
                 $.post(ajaxurl,{action:'wif_status'},function(r){
                     if(r&&r.success){
                         draw(r.data.state||{});
                         drawLog(r.data.log||[]);
+                        drawSkuList('#wif-sku-fixed', r.data.sku_fixed);
+                        drawSkuList('#wif-sku-errors', r.data.sku_errors);
+                        drawSkuList('#wif-sku-no-urls', r.data.sku_no_urls);
                         if(r.data.next_batch) $('#wif-next').text(r.data.next_batch);
                         if(typeof cb==='function') cb(r.data);
                     }
@@ -221,6 +328,7 @@ class Woo_Image_Fixer {
             });
         });
         </script>
+        </div>
         <?php
     }
 
@@ -277,6 +385,9 @@ class Woo_Image_Fixer {
             'total'          => 0,
             'current'        => 0,
             'stats'          => ['skipped'=>0,'errors'=>0,'img_fixed'=>0],
+            'sku_fixed'      => [],
+            'sku_errors'     => [],
+            'sku_no_urls'    => [],
             'processing'     => false,
             'started_at'     => current_time('mysql'),
             'finished'       => false,
@@ -376,6 +487,9 @@ class Woo_Image_Fixer {
                 'scanning'   => !empty($state['scanning']),
             ] : ['total'=>0,'current'=>0,'stats'=>[],'processing'=>false,'finished'=>false,'scanning'=>false],
             'log'  => is_array($log)?array_slice($log, -100):[],
+            'sku_fixed'  => is_array($state['sku_fixed']??null) ? array_values($state['sku_fixed']) : [],
+            'sku_errors' => is_array($state['sku_errors']??null) ? array_values($state['sku_errors']) : [],
+            'sku_no_urls' => is_array($state['sku_no_urls']??null) ? array_values($state['sku_no_urls']) : [],
             'next_batch' => $next ? date_i18n('Y-m-d H:i:s', $next) : '—',
         ];
         wp_send_json_success($resp);
@@ -446,6 +560,9 @@ class Woo_Image_Fixer {
             $ids     = $state['ids'];
             $offer   = is_array($state['offer_map']) ? $state['offer_map'] : [];
             $black   = is_array($state['blacklist']) ? $state['blacklist'] : [];
+            $skuFixed = is_array($state['sku_fixed']) ? $state['sku_fixed'] : [];
+            $skuErrors = is_array($state['sku_errors']) ? $state['sku_errors'] : [];
+            $skuNoUrls = is_array($state['sku_no_urls']) ? $state['sku_no_urls'] : [];
 
             $processedThisRun = 0;
 
@@ -486,6 +603,7 @@ class Woo_Image_Fixer {
                         if ($fixed>0){
                             $stats['img_fixed'] += $fixed;
                             $this->log("✓ Fixed {$fixed} images PID={$pid} SKU={$sku}");
+                            $skuFixed[] = $sku;
                         } else {
                             $this->log("✗ No images sideloaded PID={$pid} SKU={$sku} (blacklisted)");
                             $black[$sku]=1;
@@ -494,9 +612,11 @@ class Woo_Image_Fixer {
                     } else {
                         $this->log("✗ No URLs in feed for SKU={$sku}");
                         $stats['skipped']++;
+                        $skuNoUrls[] = $sku;
                     }
                 } catch(\Throwable $e){
                     $stats['errors']++;
+                    $skuErrors[] = $sku;
                     $this->log('Exception PID='.$pid.' SKU='.$sku.': '.$e->getMessage());
                 }
 
@@ -507,6 +627,9 @@ class Woo_Image_Fixer {
                 $state['current']       = $current;
                 $state['stats']         = $stats;
                 $state['blacklist']     = $black;
+                $state['sku_fixed']     = $skuFixed;
+                $state['sku_errors']    = $skuErrors;
+                $state['sku_no_urls']   = $skuNoUrls;
                 $state['last_activity'] = current_time('mysql');
                 update_option(self::OPTION_KEY, $state, false);
                 
@@ -520,6 +643,9 @@ class Woo_Image_Fixer {
             $state['current']       = $current;
             $state['stats']         = $stats;
             $state['blacklist']     = $black;
+            $state['sku_fixed']     = $skuFixed;
+            $state['sku_errors']    = $skuErrors;
+            $state['sku_no_urls']   = $skuNoUrls;
             $state['last_activity'] = current_time('mysql');
             $state['processing']    = !$finished;
             $state['finished']      = $finished;
@@ -644,7 +770,8 @@ class Woo_Image_Fixer {
         }
         
         foreach($ids as $aid){
-            $file = get_attached_file($aid);
+            $converted = $this->convert_attachment_to_webp($aid);
+            $file = $converted ? $converted : get_attached_file($aid);
             if ($file && file_exists($file)) {
                 wp_update_attachment_metadata($aid, wp_generate_attachment_metadata($aid, $file));
             }
@@ -799,6 +926,7 @@ class Woo_Image_Fixer {
     private function is_product_images_broken($pid){
         $thumb = (int)get_post_meta($pid,'_thumbnail_id',true);
         if ($this->is_attachment_broken($thumb)) return true;
+        if ($this->is_attachment_placeholder($thumb)) return true;
         
         $gal = get_post_meta($pid,'_product_image_gallery',true);
         if ($gal === '' || $gal === null) return false;
@@ -808,6 +936,7 @@ class Woo_Image_Fixer {
         
         foreach($ids as $aid){
             if ($this->is_attachment_broken($aid)) return true;
+            if ($this->is_attachment_placeholder($aid)) return true;
         }
         
         return false;
@@ -826,6 +955,60 @@ class Woo_Image_Fixer {
             }
         }
         return 128 * 1024 * 1024;
+    }
+
+    private function is_attachment_placeholder($att_id){
+        $att_id = (int)$att_id;
+        if ($att_id <= 0) return true;
+        $url = wp_get_attachment_url($att_id);
+        if (!$url) return true;
+        return $this->normalize_url($url) === $this->normalize_url(self::PLACEHOLDER_URL);
+    }
+
+    private function normalize_url($url){
+        $url = trim((string)$url);
+        if ($url === '') return '';
+        return preg_replace('~^https?://~', '', $url);
+    }
+
+    private function convert_attachment_to_webp($att_id){
+        $att_id = (int)$att_id;
+        if ($att_id <= 0) return '';
+
+        $file = get_attached_file($att_id);
+        if (!$file || !file_exists($file)) return '';
+
+        $mime = get_post_mime_type($att_id);
+        if ($mime === 'image/webp') return $file;
+
+        $editor = wp_get_image_editor($file);
+        if (is_wp_error($editor)) {
+            $this->log("  ✗ WebP editor error for attachment {$att_id}: ".$editor->get_error_message());
+            return '';
+        }
+
+        $pathinfo = pathinfo($file);
+        $webp_path = $pathinfo['dirname'].'/'.$pathinfo['filename'].'.webp';
+        $saved = $editor->save($webp_path, 'image/webp');
+        if (is_wp_error($saved) || empty($saved['path'])) {
+            if (is_wp_error($saved)) {
+                $this->log("  ✗ WebP save error for attachment {$att_id}: ".$saved->get_error_message());
+            }
+            return '';
+        }
+
+        update_attached_file($att_id, $saved['path']);
+        wp_update_post([
+            'ID' => $att_id,
+            'post_mime_type' => 'image/webp',
+        ]);
+
+        if ($file !== $saved['path'] && file_exists($file)) {
+            @unlink($file);
+        }
+
+        $this->log("  → Converted attachment {$att_id} to WebP");
+        return $saved['path'];
     }
 
     // ВИДАЛЕНО spawn_runner_async() повністю
