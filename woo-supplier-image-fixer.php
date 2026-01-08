@@ -12,6 +12,8 @@ class Woo_Image_Fixer {
     /* Cron hooks */
     const CRON_HOOK_BATCH    = 'woo_image_fixer_cron_process';
     const CRON_HOOK_WATCHDOG = 'woo_image_fixer_cron_watchdog';
+    const CRON_HOOK_SCAN     = 'woo_image_fixer_cron_scan';
+    const CRON_HOOK_DAILY    = 'woo_image_fixer_cron_daily';
 
     /* Options & constants */
     const SOURCE_URL   = 'https://smtm.com.ua/_prices/import-retail-ua-2.xml';
@@ -40,6 +42,8 @@ class Woo_Image_Fixer {
     public function __construct(){
         add_action(self::CRON_HOOK_BATCH,    [$this,'process_batch_cron']);
         add_action(self::CRON_HOOK_WATCHDOG, [$this,'watchdog_tick']);
+        add_action(self::CRON_HOOK_SCAN,     [$this,'process_scan_cron']);
+        add_action(self::CRON_HOOK_DAILY,    [$this,'daily_scan_cron']);
 
         register_activation_hook(__FILE__, [$this,'on_activate']);
         register_deactivation_hook(__FILE__, [$this,'on_deactivate']);
@@ -51,6 +55,7 @@ class Woo_Image_Fixer {
         add_action('wp_ajax_wif_status',        [$this,'ajax_status']);
         add_action('wp_ajax_wif_nudge',         [$this,'ajax_nudge']);
         add_action('wp_ajax_wif_restart',       [$this,'ajax_restart']);
+        add_action('wp_ajax_wif_schedule_daily',[$this,'ajax_schedule_daily']);
         add_action('wp_ajax_wif_runner',        [$this,'ajax_runner']);
         add_action('wp_ajax_wif_check_product', [$this,'ajax_check_product']);
 
@@ -75,12 +80,13 @@ class Woo_Image_Fixer {
 
     public function on_activate(){
         $this->ensure_watchdog();
+        $this->ensure_daily_schedule();
         $this->ensure_runner_token();
         $this->log('ImageFixer активовано. Watchdog — кожні 5 хвилин.');
     }
 
     public function on_deactivate(){
-        foreach ([self::CRON_HOOK_BATCH, self::CRON_HOOK_WATCHDOG] as $hook) {
+        foreach ([self::CRON_HOOK_BATCH, self::CRON_HOOK_WATCHDOG, self::CRON_HOOK_SCAN, self::CRON_HOOK_DAILY] as $hook) {
             while ($ts = wp_next_scheduled($hook)) wp_unschedule_event($ts, $hook);
         }
         delete_transient(self::LOCK_KEY);
@@ -92,6 +98,32 @@ class Woo_Image_Fixer {
             // Змінено з 'minute' на 'five_minutes'
             wp_schedule_event(time()+300, 'five_minutes', self::CRON_HOOK_WATCHDOG);
         }
+    }
+
+    private function ensure_daily_schedule(){
+        if (!wp_next_scheduled(self::CRON_HOOK_DAILY)) {
+            $next = $this->get_next_daily_timestamp();
+            wp_schedule_event($next, 'daily', self::CRON_HOOK_DAILY);
+        }
+    }
+
+    private function get_next_daily_timestamp(){
+        $now = current_time('timestamp');
+        $next = strtotime('today 22:00', $now);
+        if ($next <= $now) {
+            $next = strtotime('tomorrow 22:00', $now);
+        }
+        return $next;
+    }
+
+    private function schedule_daily_scan(){
+        $next = $this->get_next_daily_timestamp();
+        $scheduled = wp_next_scheduled(self::CRON_HOOK_DAILY);
+        if (!$scheduled || $scheduled > $next) {
+            if ($scheduled) wp_unschedule_event($scheduled, self::CRON_HOOK_DAILY);
+            wp_schedule_event($next, 'daily', self::CRON_HOOK_DAILY);
+        }
+        return $next;
     }
 
     private function ensure_runner_token(){
@@ -145,6 +177,13 @@ class Woo_Image_Fixer {
             .wif-status .wif-pill.is-on { background:#dcfce7; color:#166534; }
             .wif-status .wif-pill.is-off { background:#fee2e2; color:#991b1b; }
             .wif-footer { margin-top:18px; color:#94a3b8; font-size:11px; }
+            .wif-btn { appearance:none; border:1px solid #d1d5db; border-radius:10px; padding:8px 14px; font-weight:600; font-size:13px; cursor:pointer; background:#fff; color:#111827; transition:all .15s ease; }
+            .wif-btn:hover { border-color:#9ca3af; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
+            .wif-btn:active { transform:translateY(1px); }
+            .wif-btn-primary { background:linear-gradient(90deg,#2563eb,#4f46e5); color:#fff; border-color:#4338ca; }
+            .wif-btn-primary:hover { filter:brightness(1.05); }
+            .wif-btn-secondary { background:#f8fafc; color:#0f172a; }
+            .wif-btn-ghost { background:#eef2ff; color:#4338ca; border-color:transparent; }
             .wif-sku-list { max-height:220px; overflow:auto; border:1px solid #e5e7eb; border-radius:10px; padding:10px; background:#f8fafc; font-size:12px; color:#334155; }
             .wif-sku-list ul { margin:0; padding-left:18px; }
             .wif-sku-list li { word-break:break-all; overflow-wrap:anywhere; margin:0 0 4px; }
@@ -166,10 +205,11 @@ class Woo_Image_Fixer {
         echo '<div class="wif-card" style="grid-column: span 8;">';
         echo '<h2>Керування процесом</h2>';
         echo '<div class="wif-actions">';
-        echo '<button id="wif-start" class="button button-primary">Scan & Fix (start/resume)</button>';
-        echo '<button id="wif-nudge" class="button">Process One Batch Now</button>';
-        echo '<button id="wif-restart" class="button button-secondary">Restart from Zero</button>';
-        echo '<button id="wif-refresh" class="button">Refresh Status</button>';
+        echo '<button id="wif-start" class="wif-btn wif-btn-primary">Scan & Fix (start/resume)</button>';
+        echo '<button id="wif-nudge" class="wif-btn">Process One Batch Now</button>';
+        echo '<button id="wif-schedule-daily" class="wif-btn wif-btn-ghost">Schedule Daily Run (22:00)</button>';
+        echo '<button id="wif-restart" class="wif-btn wif-btn-secondary">Restart from Zero</button>';
+        echo '<button id="wif-refresh" class="wif-btn">Refresh Status</button>';
         echo '</div>';
         echo '<div style="margin-top:16px;">';
         echo '<div class="wif-progress"><span id="wif-bar-in"></span></div>';
@@ -194,6 +234,7 @@ class Woo_Image_Fixer {
         echo '<div class="wif-meta" style="margin-top:14px;">';
         echo '<div><strong>Фід постачальника</strong><br><code>'.esc_html(self::SOURCE_URL).'</code></div>';
         echo '<div><strong>Next batch</strong><br><span id="wif-next">'.$next_batch_label.'</span></div>';
+        echo '<div><strong>Next daily scan</strong><br><span id="wif-next-daily">—</span></div>';
         echo '<div><strong>Batch size</strong><br>'.esc_html(self::BATCH_SIZE).' товарів</div>';
         echo '<div><strong>Scan batch</strong><br>'.esc_html(self::SCAN_BATCH_SIZE).' товарів</div>';
         echo '<div><strong>Timeout</strong><br>'.esc_html(self::IMAGE_TIMEOUT).' сек</div>';
@@ -273,6 +314,7 @@ class Woo_Image_Fixer {
                         drawSkuList('#wif-sku-errors', r.data.sku_errors);
                         drawSkuList('#wif-sku-no-urls', r.data.sku_no_urls);
                         if(r.data.next_batch) $('#wif-next').text(r.data.next_batch);
+                        if(r.data.next_daily) $('#wif-next-daily').text(r.data.next_daily);
                         if(typeof cb==='function') cb(r.data);
                     }
                 });
@@ -305,6 +347,13 @@ class Woo_Image_Fixer {
             });
             $('#wif-nudge').on('click',function(){
                 $.post(ajaxurl,{action:'wif_nudge'},function(r){ status(); });
+            });
+            $('#wif-schedule-daily').on('click',function(){
+                $.post(ajaxurl,{action:'wif_schedule_daily'},function(r){
+                    if(r && r.success){
+                        status();
+                    }
+                });
             });
             $('#wif-restart').on('click',function(){
                 if(!confirm('Рестарт сканування з нуля?')) return;
@@ -358,112 +407,35 @@ class Woo_Image_Fixer {
         }
     }
 
+    public function process_scan_cron(){
+        $this->process_scan_batch();
+    }
+
+    public function daily_scan_cron(){
+        $state = get_option(self::OPTION_KEY);
+        if (is_array($state) && (!empty($state['processing']) || !empty($state['scanning']))) {
+            $this->log('Daily scan skipped: already in progress.');
+            return;
+        }
+        $started = $this->start_scan_process();
+        if ($started) {
+            $this->log('Daily scan started.');
+        }
+    }
+
     /* ---------------- Admin AJAX ---------------- */
 
     public function ajax_start(){
         if(!current_user_can('manage_woocommerce')) wp_send_json_error();
-
-        $offers = $this->fetch_xml_offers();
-        if (empty($offers)) wp_send_json_error(['msg'=>'Feed empty']);
-
-        global $wpdb;
-        $all_products = $wpdb->get_col("
-            SELECT p.ID
-            FROM {$wpdb->posts} p
-            WHERE p.post_type='product' AND p.post_status='publish'
-        ");
-
-        $state = [
-            'mode'           => 'scanning',
-            'scanning'       => true,
-            'offer_map'      => $this->build_offer_image_map($offers),
-            'scan_products'  => array_values(array_map('intval', $all_products)),
-            'scan_total'     => count($all_products),
-            'scan_current'   => 0,
-            'broken_ids'     => [],
-            'ids'            => [],
-            'total'          => 0,
-            'current'        => 0,
-            'stats'          => ['skipped'=>0,'errors'=>0,'img_fixed'=>0],
-            'sku_fixed'      => [],
-            'sku_errors'     => [],
-            'sku_no_urls'    => [],
-            'processing'     => false,
-            'started_at'     => current_time('mysql'),
-            'finished'       => false,
-            'last_activity'  => current_time('mysql'),
-            'blacklist'      => [],
-        ];
-        update_option(self::OPTION_KEY, $state, false);
-        $this->log('Starting batch scan of '.count($all_products).' products...');
+        $started = $this->start_scan_process();
+        if (!$started) wp_send_json_error(['msg'=>'Feed empty']);
         wp_send_json_success(['ok'=>true]);
     }
 
     public function ajax_scan(){
         if(!current_user_can('manage_woocommerce')) wp_send_json_error();
-        
-        $state = get_option(self::OPTION_KEY);
-        if (!is_array($state) || empty($state['scanning'])) {
-            wp_send_json_success(['scan_complete'=>true]);
-            return;
-        }
-
-        $scan_products = $state['scan_products'];
-        $scan_total    = (int)$state['scan_total'];
-        $scan_current  = (int)$state['scan_current'];
-        $broken_ids    = is_array($state['broken_ids']) ? $state['broken_ids'] : [];
-
-        $batch_end = min($scan_current + self::SCAN_BATCH_SIZE, $scan_total);
-        
-        for ($i = $scan_current; $i < $batch_end; $i++) {
-            $pid = (int)$scan_products[$i];
-            if ($this->is_product_images_broken($pid)) {
-                $broken_ids[] = $pid;
-            }
-        }
-
-        $scan_current = $batch_end;
-        $scan_complete = ($scan_current >= $scan_total);
-
-        if ($scan_complete) {
-            $this->log('Scan complete: found '.count($broken_ids).' broken products out of '.$scan_total);
-            
-            $state['mode']         = 'fix_images';
-            $state['scanning']     = false;
-            $state['ids']          = $broken_ids;
-            $state['total']        = count($broken_ids);
-            $state['current']      = 0;
-            $state['processing']   = true;
-            $state['last_activity'] = current_time('mysql');
-            
-            update_option(self::OPTION_KEY, $state, false);
-            
-            if (count($broken_ids) > 0) {
-                // Збільшено затримку з 5 до 60 секунд
-                $this->schedule_next_batch_soon(60);
-                // ВИДАЛЕНО spawn_runner_async()
-            } else {
-                $state['processing'] = false;
-                $state['finished'] = true;
-                update_option(self::OPTION_KEY, $state, false);
-            }
-            
-            wp_send_json_success(['scan_complete'=>true, 'broken_count'=>count($broken_ids)]);
-        } else {
-            $this->log("Scan progress: {$scan_current}/{$scan_total} (found ".count($broken_ids)." broken so far)");
-            
-            $state['scan_current']  = $scan_current;
-            $state['broken_ids']    = $broken_ids;
-            $state['last_activity'] = current_time('mysql');
-            update_option(self::OPTION_KEY, $state, false);
-            
-            wp_send_json_success([
-                'scan_complete' => false,
-                'scan_current'  => $scan_current,
-                'scan_total'    => $scan_total,
-                'broken_count'  => count($broken_ids)
-            ]);
-        }
+        $result = $this->process_scan_batch(true);
+        wp_send_json_success($result);
     }
 
     public function ajax_restart(){
@@ -477,6 +449,7 @@ class Woo_Image_Fixer {
         $state = get_option(self::OPTION_KEY);
         $log   = get_option(self::LOG_KEY);
         $next  = wp_next_scheduled(self::CRON_HOOK_BATCH);
+        $next_daily = wp_next_scheduled(self::CRON_HOOK_DAILY);
         $resp = [
             'state' => is_array($state) ? [
                 'total'      => (int)($state['total']??0),
@@ -491,6 +464,7 @@ class Woo_Image_Fixer {
             'sku_errors' => is_array($state['sku_errors']??null) ? array_values($state['sku_errors']) : [],
             'sku_no_urls' => is_array($state['sku_no_urls']??null) ? array_values($state['sku_no_urls']) : [],
             'next_batch' => $next ? date_i18n('Y-m-d H:i:s', $next) : '—',
+            'next_daily' => $next_daily ? date_i18n('Y-m-d H:i:s', $next_daily) : '—',
         ];
         wp_send_json_success($resp);
     }
@@ -499,6 +473,12 @@ class Woo_Image_Fixer {
         if(!current_user_can('manage_woocommerce')) wp_send_json_error();
         $this->process_batch_cron();
         wp_send_json_success(['ok'=>true]);
+    }
+
+    public function ajax_schedule_daily(){
+        if(!current_user_can('manage_woocommerce')) wp_send_json_error();
+        $next = $this->schedule_daily_scan();
+        wp_send_json_success(['next_daily'=>date_i18n('Y-m-d H:i:s', $next)]);
     }
 
     public function ajax_runner(){
@@ -538,6 +518,111 @@ class Woo_Image_Fixer {
     }
 
     /* ---------------- Core: batch ---------------- */
+
+    private function start_scan_process(){
+        $offers = $this->fetch_xml_offers();
+        if (empty($offers)) return false;
+
+        global $wpdb;
+        $all_products = $wpdb->get_col("
+            SELECT p.ID
+            FROM {$wpdb->posts} p
+            WHERE p.post_type='product' AND p.post_status='publish'
+        ");
+
+        $state = [
+            'mode'           => 'scanning',
+            'scanning'       => true,
+            'offer_map'      => $this->build_offer_image_map($offers),
+            'scan_products'  => array_values(array_map('intval', $all_products)),
+            'scan_total'     => count($all_products),
+            'scan_current'   => 0,
+            'broken_ids'     => [],
+            'ids'            => [],
+            'total'          => 0,
+            'current'        => 0,
+            'stats'          => ['skipped'=>0,'errors'=>0,'img_fixed'=>0],
+            'sku_fixed'      => [],
+            'sku_errors'     => [],
+            'sku_no_urls'    => [],
+            'processing'     => false,
+            'started_at'     => current_time('mysql'),
+            'finished'       => false,
+            'last_activity'  => current_time('mysql'),
+            'blacklist'      => [],
+        ];
+        update_option(self::OPTION_KEY, $state, false);
+        $this->log('Starting batch scan of '.count($all_products).' products...');
+        $this->schedule_next_scan_soon(30);
+        return true;
+    }
+
+    private function process_scan_batch($return_payload = false){
+        $state = get_option(self::OPTION_KEY);
+        if (!is_array($state) || empty($state['scanning'])) {
+            return ['scan_complete'=>true];
+        }
+
+        $scan_products = $state['scan_products'];
+        $scan_total    = (int)$state['scan_total'];
+        $scan_current  = (int)$state['scan_current'];
+        $broken_ids    = is_array($state['broken_ids']) ? $state['broken_ids'] : [];
+
+        $batch_end = min($scan_current + self::SCAN_BATCH_SIZE, $scan_total);
+
+        for ($i = $scan_current; $i < $batch_end; $i++) {
+            $pid = (int)$scan_products[$i];
+            if ($this->is_product_images_broken($pid)) {
+                $broken_ids[] = $pid;
+            }
+        }
+
+        $scan_current = $batch_end;
+        $scan_complete = ($scan_current >= $scan_total);
+
+        if ($scan_complete) {
+            $this->log('Scan complete: found '.count($broken_ids).' broken products out of '.$scan_total);
+
+            $state['mode']         = 'fix_images';
+            $state['scanning']     = false;
+            $state['ids']          = $broken_ids;
+            $state['total']        = count($broken_ids);
+            $state['current']      = 0;
+            $state['processing']   = true;
+            $state['last_activity'] = current_time('mysql');
+
+            update_option(self::OPTION_KEY, $state, false);
+
+            if (count($broken_ids) > 0) {
+                // Збільшено затримку з 5 до 60 секунд
+                $this->schedule_next_batch_soon(60);
+                // ВИДАЛЕНО spawn_runner_async()
+            } else {
+                $state['processing'] = false;
+                $state['finished'] = true;
+                update_option(self::OPTION_KEY, $state, false);
+                $this->schedule_daily_scan();
+            }
+
+            return ['scan_complete'=>true, 'broken_count'=>count($broken_ids)];
+        }
+
+        $this->log("Scan progress: {$scan_current}/{$scan_total} (found ".count($broken_ids)." broken so far)");
+
+        $state['scan_current']  = $scan_current;
+        $state['broken_ids']    = $broken_ids;
+        $state['last_activity'] = current_time('mysql');
+        update_option(self::OPTION_KEY, $state, false);
+
+        $this->schedule_next_scan_soon(60);
+
+        return [
+            'scan_complete' => false,
+            'scan_current'  => $scan_current,
+            'scan_total'    => $scan_total,
+            'broken_count'  => count($broken_ids)
+        ];
+    }
 
     public function process_batch_cron(){
         if (get_transient(self::LOCK_KEY)) return;
@@ -654,6 +739,7 @@ class Woo_Image_Fixer {
             if ($finished) {
                 $this->log('✓✓✓ ImageFixer FINISHED '.$current.'/'.$total.' | Fixed:'.$stats['img_fixed'].' Errors:'.$stats['errors']);
                 if ($ts = wp_next_scheduled(self::CRON_HOOK_BATCH)) wp_unschedule_event($ts, self::CRON_HOOK_BATCH);
+                $this->schedule_daily_scan();
             } else {
                 $this->log('ImageFixer progress '.$current.'/'.$total.'. Scheduling next.');
                 // Збільшено затримку між батчами
@@ -671,6 +757,15 @@ class Woo_Image_Fixer {
         if (!$next || $next > $when) {
             if ($next) wp_unschedule_event($next, self::CRON_HOOK_BATCH);
             wp_schedule_single_event($when, self::CRON_HOOK_BATCH);
+        }
+    }
+
+    private function schedule_next_scan_soon($delay=30){
+        $when = time() + max(30, (int)$delay);
+        $next = wp_next_scheduled(self::CRON_HOOK_SCAN);
+        if (!$next || $next > $when) {
+            if ($next) wp_unschedule_event($next, self::CRON_HOOK_SCAN);
+            wp_schedule_single_event($when, self::CRON_HOOK_SCAN);
         }
     }
 
